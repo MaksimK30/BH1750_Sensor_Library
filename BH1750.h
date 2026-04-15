@@ -1,7 +1,4 @@
-#include <stdlib.h>
-#include "stm32f4xx_hal.h"
 #include "main.h"
-#include "RingBuffer.h"
 
 #ifndef BH1750_H
 
@@ -19,7 +16,6 @@
 #define BH1750_LOW_RES_MEASUREMENT_TIMEOUT 20
 #define BH1750_HIGH_RES_MEASUREMENT_TIMEOUT 200
 
-#define BH1750_I2C_PORT &hi2c1
 #define BH1750_HIGH_ADDR 0x5C << 1
 #define BH1750_LOW_ADDR 0x23 << 1
 #define BH1750_DEFAULT_SENSITIVITY 0x45
@@ -27,7 +23,7 @@
 typedef enum {
 	BH1750_ONE_LX,
 	BH1750_HALF_LX
-} MEASUREMENT_RESOLUTION_MODE;
+} BH1750_MEASUREMENT_RESOLUTION_MODE;
 
 typedef enum {
 	BH1750_OK,
@@ -81,7 +77,14 @@ typedef struct{
 	* @details lux хранит результаты измерения датчика BH1750 в готовом виде (в люксах)
 	*/
 	float measure;
-	
+
+	/*! 
+	* @brief Чувствительность датчика
+	*  
+	* @details хранит чувствительность измерения датчика BH1750 для корректировки времени измерения
+	*/
+	uint8_t sensitivity;
+
 	BH1750_STATUS lastError;
 } BH1750;
 
@@ -93,7 +96,14 @@ typedef struct{
 * @param[in] sensor указатель на проверяемую структуру
 * @return результат проверки 0 - структура и её поля заполнены, 1 - пуста структура или одно из полей 
 */
-int8_t BH1750IsNull(BH1750 *sensor);
+bool BH1750_IsNull(BH1750 *sensor);
+
+/*!
+* @brief Конвертация ответа датчика в люксы
+* @details Проводит конвертацию ответа датчика в люксы
+* @param[in] sensor указатель на проверяемую структуру
+*/
+void BH1750_GetLux(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /////////////////////////////BLOCKING MODE/////////////////////////////
 /*!
 * @brief Инициализация датчика
@@ -104,7 +114,7 @@ int8_t BH1750IsNull(BH1750 *sensor);
 * 
 * @return Указатель на созданную структуру, описывающую датчик 
 */
-BH1750* BH1750Init(const I2C_HandleTypeDef *port, const uint8_t address);
+BH1750* BH1750_Init(I2C_HandleTypeDef *port, uint8_t address);
 /*!
 * @brief Выполнить чтение в режиме высокого разрешения
 * @details Выполняет измерение в режиме высокого разрешения, 
@@ -115,7 +125,7 @@ BH1750* BH1750Init(const I2C_HandleTypeDef *port, const uint8_t address);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает указатель на созданную функцию или NULL в случае ошибки
 */
-BH1750_STATUS readHighResolutionDataMode1(BH1750 *sensor);
+BH1750_STATUS BH1750_ReadHighResolutionData_Mode1(BH1750 *sensor);
 /*!
 * @brief Выполнить чтение в режиме высокого разрешения
 * @details Выполняет измерение в режиме высокого разрешения, 
@@ -126,7 +136,7 @@ BH1750_STATUS readHighResolutionDataMode1(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS readHighResolutionDataMode2(BH1750 *sensor);
+BH1750_STATUS BH1750_ReadHighResolutionData_Mode2(BH1750 *sensor);
 /*!
 * @brief Выполнить чтение в высоком разрешении с нужной чувствительностью 
 * @details Вызывает одну из функций измерения в режиме высокого разрешения,
@@ -135,7 +145,7 @@ BH1750_STATUS readHighResolutionDataMode2(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @param[in] mode точность измерения 1 или 0.5 люкс
 */
-void readHighResolutionData(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode);
+void BH1750_ReadHighResolutionData(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /*!
 * @brief Выполнить чтение в режиме низкого разрешения
 * @details Выполняет измерение в режиме низкого разрешения, 
@@ -145,7 +155,7 @@ void readHighResolutionData(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mo
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает указатель на созданную функцию или NULL в случае ошибки
 */
-BH1750_STATUS readLowResolutionData(BH1750 *sensor);
+BH1750_STATUS BH1750_ReadLowResolutionData(BH1750 *sensor);
 /*!
 * @brief Выполнить одно чтение в высоком разрешении 
 * @details Выполняет измерения в режиме высокого разрешения,  
@@ -157,7 +167,7 @@ BH1750_STATUS readLowResolutionData(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS readOnceHighResolutionDataMode1(BH1750 *sensor);
+BH1750_STATUS BH1750_ReadOnceHighResolutionData_Mode1(BH1750 *sensor);
 /*!
 * @brief Выполнить одно чтение в высоком разрешении 
 * @details Выполняет измерения в режиме высокого разрешения,  
@@ -169,7 +179,7 @@ BH1750_STATUS readOnceHighResolutionDataMode1(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS readOnceHighResolutionDataMode2(BH1750 *sensor);
+BH1750_STATUS BH1750_ReadOnceHighResolutionData_Mode2(BH1750 *sensor);
 /*!
 * @brief Выполнить одно чтение в высоком разрешении с нужной чувствительностью 
 * @details Вызывает одну из функций однократного измерения 
@@ -178,7 +188,7 @@ BH1750_STATUS readOnceHighResolutionDataMode2(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @param[in] mode точность измерения 1 или 0.5 люкс
 */
-void readOnceHighResolutionData(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode);
+void BH1750_ReadOnceHighResolutionData(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /*!
 * @brief Выполнить одно чтение в низком разрешении 
 * @details Выполняет однократное измерение в режиме низкого разрешения,  
@@ -189,7 +199,7 @@ void readOnceHighResolutionData(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MOD
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS readOnceLowResolutionData(BH1750 *sensor);
+BH1750_STATUS BH1750_ReadOnceLowResolutionData(BH1750 *sensor);
 /*!
 *	@brief Включить/Выключить датчик освещения
 *	
@@ -201,7 +211,7 @@ BH1750_STATUS readOnceLowResolutionData(BH1750 *sensor);
 * @param[in] mode логическая переменная переменная включено/выключено
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS sensorPowerSwitch(BH1750 *sensor, const uint8_t mode);
+BH1750_STATUS BH1750_SensorPowerSwitch(BH1750 *sensor, uint8_t mode);
 /*!
 *	@brief Сбросить регистр данных датчика освещения
 *	
@@ -212,7 +222,7 @@ BH1750_STATUS sensorPowerSwitch(BH1750 *sensor, const uint8_t mode);
 * @param[in] sensor указатель на структуру с информацией целевом датчике
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS resetSensor(BH1750 *sensor);
+BH1750_STATUS BH1750_ResetSensor(BH1750 *sensor);
 /*!
 *	@brief Установить чувствительность датчика освещения
 *	
@@ -224,7 +234,7 @@ BH1750_STATUS resetSensor(BH1750 *sensor);
 * @param[in] sensitivity новое значение чувствительности
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS setSensorSensitivity(BH1750 *sensor, const uint8_t sensitivity);
+BH1750_STATUS BH1750_SetSensorSensitivity(BH1750 *sensor, uint8_t sensitivity);
 
 /*!
 * @brief Деструктор структуры
@@ -232,7 +242,7 @@ BH1750_STATUS setSensorSensitivity(BH1750 *sensor, const uint8_t sensitivity);
 *
 * @param[in] sensor указатель на структуру, подлежащую удалению
 */
-void BH1750Deleter(BH1750 *sensor);
+void BH1750_Deleter(BH1750 *sensor);
 /////////////////////////////NON-BLOCKING MODE WITH INTERRUPTIONS/////////////////////////////
 /*!
 * @brief Сделать измерение в режиме высокого разрешения
@@ -243,7 +253,7 @@ void BH1750Deleter(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitHighResolutionDataMode1IT(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitHighResolutionData_Mode1_IT(BH1750 *sensor);
 /*!
 * @brief Сделать измерение в режиме высокого разрешения
 * @details Отправляет команду на измерение в режиме высокого разрешения, 
@@ -253,7 +263,7 @@ BH1750_STATUS transmitHighResolutionDataMode1IT(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitHighResolutionDataMode2IT(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitHighResolutionData_Mode2_IT(BH1750 *sensor);
 /*!
 * @brief Сделать измерение в высоком разрешении с нужной чувствительностью 
 * @details Вызывает одну из функций считывания результата измерения в режиме 
@@ -263,7 +273,7 @@ BH1750_STATUS transmitHighResolutionDataMode2IT(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @param[in] mode точность измерения 1 или 0.5 люкс
 */
-void transmitHighResolutionDataIT(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode);
+void BH1750_TransmitHighResolutionData_IT(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /*!
 * @brief Отправить запрос на чтение в режиме низкого разрешения
 * @details Отправляет запрос на чтение в режиме низкого разрешения, 
@@ -272,7 +282,7 @@ void transmitHighResolutionDataIT(BH1750 *sensor, const MEASUREMENT_RESOLUTION_M
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitLowResolutionDataIT(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitLowResolutionData_IT(BH1750 *sensor);
 /*!
 * @brief Отправить один запрос на измерение в режиме высокого разрешения 
 * @details Отправляет один запрос на измерение в режиме высокого разрешения, 
@@ -282,7 +292,7 @@ BH1750_STATUS transmitLowResolutionDataIT(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitOnceHighResolutionDataMode1IT(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitOnceHighResolutionData_Mode1_IT(BH1750 *sensor);
 /*!
 * @brief Отправить один запрос на чтение в высоком разрешении 
 * @details Отправляет запрос на четение результата измерения 
@@ -292,7 +302,7 @@ BH1750_STATUS transmitOnceHighResolutionDataMode1IT(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitOnceHighResolutionDataMode2IT(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitOnceHighResolutionData_Mode2_IT(BH1750 *sensor);
 /*!
 * @brief Отправить один запрос на измерение в высоком разрешении 
 * с нужной чувствительностью 
@@ -303,7 +313,7 @@ BH1750_STATUS transmitOnceHighResolutionDataMode2IT(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @param[in] mode точность измерения 1 или 0.5 люкс
 */
-void transmitOnceHighResolutionDataIT(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode);
+void BH1750_TransmitOnceHighResolutionData_IT(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /*!
 * @brief Отправить один запрос на чтение в низком разрешении 
 * @details Отправляет запрос на однократное измерение в режиме 
@@ -313,7 +323,7 @@ void transmitOnceHighResolutionDataIT(BH1750 *sensor, const MEASUREMENT_RESOLUTI
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitOnceLowResolutionDataIT(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitOnceLowResolutionData_IT(BH1750 *sensor);
 /*!
 *	@brief Включить/Выключить датчик освещения
 *	
@@ -325,7 +335,7 @@ BH1750_STATUS transmitOnceLowResolutionDataIT(BH1750 *sensor);
 * @param[in] mode логическая переменная переменная включено/выключено
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS sensorPowerSwitchIT(BH1750 *sensor, const uint8_t mode);
+BH1750_STATUS BH1750_SensorPowerSwitch_IT(BH1750 *sensor, uint8_t mode);
 /*!
 *	@brief Сбросить регистр данных датчика освещения
 *	
@@ -337,7 +347,7 @@ BH1750_STATUS sensorPowerSwitchIT(BH1750 *sensor, const uint8_t mode);
 * @param[in] sensor указатель на структуру с информацией целевом датчике
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS resetSensorIT(BH1750 *sensor);
+BH1750_STATUS BH1750_ResetSensor_IT(BH1750 *sensor);
 /*!
 *	@brief Установить чувствительность датчика освещения
 *	
@@ -349,17 +359,16 @@ BH1750_STATUS resetSensorIT(BH1750 *sensor);
 * @param[in] sensitivity новое значение чувствительности
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS setSensorSensitivityIT(BH1750 *sensor, const uint8_t sensitivity);
+BH1750_STATUS BH1750_SetSensorSensitivity_IT(BH1750 *sensor, uint8_t sensitivity);
 /*!
 * @brief Получить результат запроса 
 * @details Отправляет команду получения ответа на запрос.
 * Все операции происходят в неблокирующем режиме с прерываниями
 *
 * @param[in] sensor указатель на порт, с которым соединён датчик 
-* @param[in] bytesCount количество байт, которые будут получены 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS BH1750RecieveIT(BH1750 *sensor, uint8_t bytesCount);
+BH1750_STATUS BH1750_Recieve_IT(BH1750 *sensor);
 /////////////////////////////NON-BLOCKING MODE WITH DMA/////////////////////////////
 /*!
 * @brief Сделать измерение в режиме высокого разрешения
@@ -370,7 +379,7 @@ BH1750_STATUS BH1750RecieveIT(BH1750 *sensor, uint8_t bytesCount);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitHighResolutionDataMode1DMA(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitHighResolutionData_Mode1_DMA(BH1750 *sensor);
 /*!
 * @brief Получить результат измерения в высоком разрешении
 * @details Получить ответ на запрос измерения в режиме высокого разрешения, 
@@ -380,7 +389,7 @@ BH1750_STATUS transmitHighResolutionDataMode1DMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS recieveHighResolutionDataMode1DMA(BH1750 *sensor);
+BH1750_STATUS BH1750_RecieveHighResolutionData_Mode1_DMA(BH1750 *sensor);
 /*!
 * @brief Сделать измерение в режиме высокого разрешения
 * @details Отправляет команду на измерение в режиме высокого разрешения, 
@@ -390,7 +399,7 @@ BH1750_STATUS recieveHighResolutionDataMode1DMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitHighResolutionDataMode2DMA(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitHighResolutionData_Mode2_DMA(BH1750 *sensor);
 /*!
 * @brief Получить результат измерения в высоком разрешении
 * @details Считать ответ на запрос измерения в режиме высокого разрешения, 
@@ -400,7 +409,7 @@ BH1750_STATUS transmitHighResolutionDataMode2DMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS recieveHighResolutionDataMode2DMA(BH1750 *sensor);
+BH1750_STATUS BH1750_RecieveHighResolutionData_Mode2_DMA(BH1750 *sensor);
 /*!
 * @brief Сделать измерение в высоком разрешении с нужной чувствительностью 
 * @details Вызывает одну из функций считывания результата измерения в режиме 
@@ -410,7 +419,7 @@ BH1750_STATUS recieveHighResolutionDataMode2DMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @param[in] mode точность измерения 1 или 0.5 люкс
 */
-void transmitHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode);
+void BH1750_TransmitHighResolutionData_DMA(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /*!
 * @brief Отправить запрос на чтение в высоком разрешении с нужной чувствительностью 
 * @details Вызывает одну из функций измерения в режиме высокого разрешения,
@@ -420,7 +429,7 @@ void transmitHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTION_
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @param[in] mode точность измерения 1 или 0.5 люкс
 */
-void recieveHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode);
+void BH1750_RecieveHighResolutionData_DMA(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /*!
 * @brief Отправить запрос на чтение в режиме низкого разрешения
 * @details Отправляет запрос на чтение в режиме низкого разрешения, 
@@ -429,7 +438,7 @@ void recieveHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTION_M
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitLowResolutionDataDMA(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitLowResolutionData_DMA(BH1750 *sensor);
 /*!
 * @brief Получить ответ на запрос чтения в режиме низкого разрешения
 * @details Отправляет запрос на получение измерения в режиме низкого 
@@ -438,7 +447,7 @@ BH1750_STATUS transmitLowResolutionDataDMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS recieveLowResolutionDataDMA(BH1750 *sensor);
+BH1750_STATUS BH1750_RecieveLowResolutionData_DMA(BH1750 *sensor);
 /*!
 * @brief Отправить один запрос на измерение в режиме высокого разрешения 
 * @details Отправляет один запрос на измерение в режиме высокого разрешения, 
@@ -448,7 +457,7 @@ BH1750_STATUS recieveLowResolutionDataDMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitOnceHighResolutionDataMode1DMA(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitOnceHighResolutionData_Mode1_DMA(BH1750 *sensor);
 /*!
 * @brief Получить ответ на запрос чтения в высоком разрешении 
 * @details Отправляет запрос на получение ответа в режиме 
@@ -458,7 +467,7 @@ BH1750_STATUS transmitOnceHighResolutionDataMode1DMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS recieveOnceHighResolutionDataMode1DMA(BH1750 *sensor);
+BH1750_STATUS BH1750_RecieveOnceHighResolutionData_Mode1_DMA(BH1750 *sensor);
 /*!
 * @brief Отправить один запрос на чтение в высоком разрешении 
 * @details Отправляет запрос на четение результата измерения 
@@ -468,7 +477,7 @@ BH1750_STATUS recieveOnceHighResolutionDataMode1DMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции 
 */
-BH1750_STATUS transmitOnceHighResolutionDataMode2DMA(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitOnceHighResolutionData_Mode2_DMA(BH1750 *sensor);
 /*!
 * @brief Отправить один запрос на получение измерения в высоком разрешении 
 * @details Отправляет запрос на получение ответа в режиме 
@@ -478,7 +487,7 @@ BH1750_STATUS transmitOnceHighResolutionDataMode2DMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS recieveOnceHighResolutionDataMode2DMA(BH1750 *sensor);
+BH1750_STATUS BH1750_RecieveOnceHighResolutionData_Mode2_DMA(BH1750 *sensor);
 /*!
 * @brief Отправить один запрос на измерение в высоком разрешении 
 * с нужной чувствительностью 
@@ -489,7 +498,7 @@ BH1750_STATUS recieveOnceHighResolutionDataMode2DMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @param[in] mode точность измерения 1 или 0.5 люкс
 */
-void transmitOnceHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode);
+void BH1750_TransmitOnceHighResolutionData_DMA(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /*!
 * @brief Получить один результата чтение в высоком разрешении с нужной чувствительностью 
 * @details Вызывает одну из функций однократного измерения 
@@ -499,7 +508,7 @@ void transmitOnceHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUT
 * @param[in] sensor указатель на порт, с которым соединён датчик  
 * @param[in] mode точность измерения 1 или 0.5 люкс
 */
-void recieveOnceHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode);
+void BH1750_RecieveOnceHighResolutionData_DMA(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode);
 /*!
 * @brief Отправить один запрос на чтение в низком разрешении 
 * @details Отправляет запрос на однократное измерение в режиме 
@@ -509,7 +518,7 @@ void recieveOnceHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTI
 * @param[in] sensor указатель на порт, с которым соединён датчик 
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS transmitOnceLowResolutionDataDMA(BH1750 *sensor);
+BH1750_STATUS BH1750_TransmitOnceLowResolutionData_DMA(BH1750 *sensor);
 /*!
 * @brief Получить один результат чтения в низком разрешении 
 * @details Выполняет запрос на получение результата однократного
@@ -519,7 +528,7 @@ BH1750_STATUS transmitOnceLowResolutionDataDMA(BH1750 *sensor);
 * @param[in] sensor указатель на порт, с которым соединён датчик
 * @return Возвращает статус датчика после вызова функции 
 */
-BH1750_STATUS recieveOnceLowResolutionDataDMA(BH1750 *sensor);
+BH1750_STATUS BH1750_RecieveOnceLowResolutionData_DMA(BH1750 *sensor);
 /*!
 *	@brief Включить/Выключить датчик освещения
 *	
@@ -531,7 +540,7 @@ BH1750_STATUS recieveOnceLowResolutionDataDMA(BH1750 *sensor);
 * @param[in] mode логическая переменная переменная включено/выключено
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS sensorPowerSwitchDMA(BH1750 *sensor, const uint8_t mode);
+BH1750_STATUS BH1750_SensorPowerSwitch_DMA(BH1750 *sensor, uint8_t mode);
 /*!
 *	@brief Сбросить регистр данных датчика освещения
 *	
@@ -543,7 +552,7 @@ BH1750_STATUS sensorPowerSwitchDMA(BH1750 *sensor, const uint8_t mode);
 * @param[in] sensor указатель на структуру с информацией целевом датчике
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS resetSensorDMA(BH1750 *sensor);
+BH1750_STATUS BH1750_ResetSensor_DMA(BH1750 *sensor);
 /*!
 *	@brief Установить чувствительность датчика освещения
 *	
@@ -555,5 +564,14 @@ BH1750_STATUS resetSensorDMA(BH1750 *sensor);
 * @param[in] sensitivity новое значение чувствительности
 * @return Возвращает статус датчика после вызова функции
 */
-BH1750_STATUS setSensorSensitivityDMA(BH1750 *sensor, const uint8_t sensitivity);
+BH1750_STATUS BH1750_SetSensorSensitivity_DMA(BH1750 *sensor, uint8_t sensitivity);
+/*!
+* @brief Получить результат запроса 
+* @details Отправляет команду получения ответа на запрос.
+* Все операции происходят в неблокирующем режиме с DMA
+*
+* @param[in] sensor указатель на порт, с которым соединён датчик 
+* @return Возвращает статус датчика после вызова функции
+*/
+BH1750_STATUS BH1750_Recieve_DMA(BH1750 *sensor);
 #endif //BH1750_H

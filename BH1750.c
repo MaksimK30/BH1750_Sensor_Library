@@ -1,22 +1,21 @@
 #include "BH1750.h"
-#include "../Libs/SSD1306/ssd1306.h"
 
 extern I2C_HandleTypeDef hi2c1;
 
-int8_t BH1750IsNull(BH1750 *sensor){
+bool BH1750_IsNull(BH1750 *sensor){
 	if (sensor == NULL){
-		return BH1750_IS_NULL;
+		return true;
 	}	
 	
 	if(sensor->buff == NULL || sensor->ret == NULL || sensor->port == NULL){
 		sensor->lastError = BH1750_NOT_INITIALIZED;
-		return BH1750_NOT_INITIALIZED;
+		return true;
 	}
 	
-	return BH1750_OK;
+	return false;
 }
 
-BH1750* BH1750Init(const I2C_HandleTypeDef *port, const uint8_t address){	
+BH1750* BH1750_Init(I2C_HandleTypeDef *port, uint8_t address){	
 	//Выделяем память для структуры, описывающей сенсор
 	BH1750 *sensor = (BH1750*)malloc(sizeof(BH1750));
 	
@@ -25,8 +24,13 @@ BH1750* BH1750Init(const I2C_HandleTypeDef *port, const uint8_t address){
 		return NULL;
 	}
 	
+	//Настройка структуры
+	sensor->port = port;
+	sensor->address = address;
+	sensor->sensitivity = BH1750_DEFAULT_SENSITIVITY;
+	
 	//Выделяем память для буфера данных
-	sensor->buff = (uint8_t*)calloc(3,1);
+	sensor->buff = (uint8_t*)calloc(2, sizeof(uint8_t));
 	
 	// Верни NULL при ошибке, очисти выделенные ресурсы
 	if(sensor->buff == NULL){
@@ -44,41 +48,57 @@ BH1750* BH1750Init(const I2C_HandleTypeDef *port, const uint8_t address){
 		return NULL;
 	}
 	
-	//Настройка структуры
-	sensor->port = (I2C_HandleTypeDef *)port;
-	sensor->address = address;
-	
 	// Включить сенсор
-	sensorPowerSwitch(sensor, BH1750_POWER_UP);
+	BH1750_SensorPowerSwitch(sensor, BH1750_POWER_UP);
 	
 	// Верни NULL при ошибке
 	if(*sensor->ret != HAL_OK){
+		free(sensor->ret);
+		free(sensor->buff);
+		free(sensor);
 		return NULL;
 	}
 	 
 	// Сбросить контроллер
-	resetSensor(sensor);
+	BH1750_ResetSensor(sensor);
 	
 	// Верни NULL при ошибке
 	if(*sensor->ret != HAL_OK){
+		free(sensor->ret);
+		free(sensor->buff);
+		free(sensor);
+		return NULL;
+	} 
+	
+	//Сбросим чувствительность на значение по умолчанию.
+	BH1750_SetSensorSensitivity(sensor, BH1750_DEFAULT_SENSITIVITY);
+	
+	// Верни NULL при ошибке
+	if(*sensor->ret != HAL_OK){
+		free(sensor->ret);
+		free(sensor->buff);
+		free(sensor);
 		return NULL;
 	} 
 	
 	return sensor;
 }
 
-BH1750_STATUS readHighResolutionDataMode1(BH1750 *sensor){
+void BH1750_GetLux(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode){
+	float correction = mode == BH1750_ONE_LX ? (69 / sensor->sensitivity) : (69 / sensor->sensitivity) / 2;
+	sensor->measure = (uint16_t)(sensor->buff[0] << 8 | sensor->buff[1]) / 1.2 * correction;
+}
+BH1750_STATUS BH1750_ReadHighResolutionData_Mode1(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
 	sensor->buff[0] = BH1750_HIGH_RES_MODE1;
 	
 	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, 30);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -86,11 +106,11 @@ BH1750_STATUS readHighResolutionDataMode1(BH1750 *sensor){
 		return BH1750_TX_ERROR;
 	}	
 	
-	//Ждём конца измерений
-	HAL_Delay(200);
+	//Ждём конца измерений, время вычисления определим динамически
+	HAL_Delay(3.2	 *  sensor->sensitivity);
 	
 	//Запрашиваем результат
-	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 3, 30);
+	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 2, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -99,24 +119,23 @@ BH1750_STATUS readHighResolutionDataMode1(BH1750 *sensor){
 	}
 	
 	//Записываем результат в структуру в сыром виде. Требует превращения в люксы
-	sensor->measure = sensor->buff[0] << 8 | sensor->buff[1];
+	BH1750_GetLux(sensor, BH1750_ONE_LX);
 	
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
 
-BH1750_STATUS readHighResolutionDataMode2(BH1750 *sensor){
+BH1750_STATUS BH1750_ReadHighResolutionData_Mode2(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
 	sensor->buff[0] = BH1750_HIGH_RES_MODE2;
 
 	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, 30);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -124,11 +143,11 @@ BH1750_STATUS readHighResolutionDataMode2(BH1750 *sensor){
 		return BH1750_TX_ERROR;
 	}	
 	
-	//Ждём конца измерений
-	HAL_Delay(200);
+	//Ждём конца измерений, время вычисления определим динамически
+	HAL_Delay(3.2	 *  sensor->sensitivity);
 	
 	//Запрашиваем результат
-	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 3, 30);
+	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 2, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -137,33 +156,33 @@ BH1750_STATUS readHighResolutionDataMode2(BH1750 *sensor){
 	}
 	
 	//Записываем результат в структуру в сыром виде. Требует превращения в люксы
-	sensor->measure = (sensor->buff[0] << 8 | sensor->buff[1]) / 2.0;
-	
+	BH1750_GetLux(sensor, BH1750_HALF_LX);
+
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
 
-void readHighResolutionData(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode){
+void BH1750_ReadHighResolutionData(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode){
 	//Вызов функции измерения в зависимости от режима
 	if(mode == BH1750_ONE_LX){
-		readHighResolutionDataMode1(sensor); //Высокая точность, 1 люкс
+		BH1750_ReadHighResolutionData_Mode1(sensor); //Высокая точность, 1 люкс
 	}else{
-		readHighResolutionDataMode2(sensor); //Высокая точность, 0.5 люкс
+		BH1750_ReadHighResolutionData_Mode2(sensor); //Высокая точность, 0.5 люкс
 	}
 }
 
-BH1750_STATUS readLowResolutionData(BH1750 *sensor){
+BH1750_STATUS BH1750_ReadLowResolutionData(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		sensor->lastError = BH1750_NOT_INITIALIZED;
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
 	sensor->buff[0] = BH1750_LOW_RES_MODE;
 	
 	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, 30);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -171,11 +190,11 @@ BH1750_STATUS readLowResolutionData(BH1750 *sensor){
 		return BH1750_TX_ERROR;
 	}	
 	
-	//Ждём конца измерений
-	HAL_Delay(30);
+	//Ждём конца измерений, время вычисления определим динамически
+	HAL_Delay(0.45 * sensor->sensitivity);
 	
 	//Запрашиваем результат
-	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 3, 30);
+	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 2, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -184,24 +203,23 @@ BH1750_STATUS readLowResolutionData(BH1750 *sensor){
 	}
 	
 	//Записываем результат в структуру в сыром виде. Требует превращения в люксы
-	sensor->measure = sensor->buff[0];
+	BH1750_GetLux(sensor, BH1750_ONE_LX);
 		
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
 
-BH1750_STATUS readOnceHighResolutionDataMode1(BH1750 *sensor){
+BH1750_STATUS BH1750_ReadOnceHighResolutionData_Mode1(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
 	sensor->buff[0] = BH1750_ONCE_HIGH_RES_MODE1;
 	
 	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, 30);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -209,11 +227,11 @@ BH1750_STATUS readOnceHighResolutionDataMode1(BH1750 *sensor){
 		return BH1750_TX_ERROR;
 	}	
 	
-	//Ждём конца измерений
-	HAL_Delay(200);
+	//Ждём конца измерений, время вычисления определим динамически
+	HAL_Delay(3.2	 *  sensor->sensitivity);
 	
 	//Запрашиваем результат
-	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 3, 30);
+	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 2, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -222,24 +240,23 @@ BH1750_STATUS readOnceHighResolutionDataMode1(BH1750 *sensor){
 	}
 	
 	//Записываем результат в структуру в сыром виде. Требует превращения в люксы
-	sensor->measure = sensor->buff[0] << 8 | sensor->buff[1];
+	BH1750_GetLux(sensor, BH1750_ONE_LX);
 	
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
 
-BH1750_STATUS readOnceHighResolutionDataMode2(BH1750 *sensor){
+BH1750_STATUS BH1750_ReadOnceHighResolutionData_Mode2(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
-	sensor->buff[0] = BH1750_HIGH_RES_MODE2;
+	sensor->buff[0] = BH1750_ONCE_HIGH_RES_MODE2;
 
 	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, 30);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -247,11 +264,11 @@ BH1750_STATUS readOnceHighResolutionDataMode2(BH1750 *sensor){
 		return BH1750_TX_ERROR;
 	}	
 	
-	//Ждём конца измерений
-	HAL_Delay(200);
+	//Ждём конца измерений, время вычисления определим динамически
+	HAL_Delay(3.2	 *  sensor->sensitivity);
 	
 	//Запрашиваем результат
-	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 3, 30);
+	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 2, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -260,33 +277,32 @@ BH1750_STATUS readOnceHighResolutionDataMode2(BH1750 *sensor){
 	}
 	
 	//Записываем результат в структуру в сыром виде. Требует превращения в люксы
-	sensor->measure = (sensor->buff[0] << 8 | sensor->buff[1]) / 2.0;
+	BH1750_GetLux(sensor, BH1750_HALF_LX);
 		
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
 
-void readOnceHighResolutionData(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode){
+void BH1750_ReadOnceHighResolutionData(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode){
 	//Вызов функции измерения в зависимости от режима
 	if(mode == BH1750_ONE_LX){
-		readOnceHighResolutionDataMode1(sensor); //Высокая точность, 1 люкс
+		BH1750_ReadOnceHighResolutionData_Mode1(sensor); //Высокая точность, 1 люкс
 	}else{
-		readOnceHighResolutionDataMode2(sensor); //Высокая точность, 0.5 люкс
+		BH1750_ReadOnceHighResolutionData_Mode2(sensor); //Высокая точность, 0.5 люкс
 	}
 }
 
-BH1750_STATUS readOnceLowResolutionData(BH1750 *sensor){
+BH1750_STATUS BH1750_ReadOnceLowResolutionData(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
 	sensor->buff[0] = BH1750_ONCE_LOW_RES_MODE;
 	
 	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, 30);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 1, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -294,11 +310,11 @@ BH1750_STATUS readOnceLowResolutionData(BH1750 *sensor){
 		return BH1750_TX_ERROR;
 	}	
 	
-	//Ждём конца измерений
-	HAL_Delay(30);
+	//Ждём конца измерений, время вычисления определим динамически
+	HAL_Delay(0.45 * sensor->sensitivity);
 	
 	//Запрашиваем результат
-	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 3, 30);
+	*sensor->ret = HAL_I2C_Master_Receive(sensor->port, sensor->address, sensor->buff, 2, HAL_MAX_DELAY);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -307,17 +323,16 @@ BH1750_STATUS readOnceLowResolutionData(BH1750 *sensor){
 	}
 	
 	//Записываем результат в структуру в сыром виде. Требует превращения в люксы
-	sensor->measure = sensor->buff[0];
+	BH1750_GetLux(sensor, BH1750_ONE_LX);
 	
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
 
-BH1750_STATUS sensorPowerSwitch(BH1750 *sensor, const uint8_t mode){
+BH1750_STATUS BH1750_SensorPowerSwitch(BH1750 *sensor, uint8_t mode){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	if(mode != BH1750_POWER_UP && mode != BH1750_POWER_DOWN){
@@ -341,11 +356,10 @@ BH1750_STATUS sensorPowerSwitch(BH1750 *sensor, const uint8_t mode){
 	return BH1750_OK;
 }
 
-BH1750_STATUS resetSensor(BH1750 *sensor){
+BH1750_STATUS BH1750_ResetSensor(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -364,41 +378,49 @@ BH1750_STATUS resetSensor(BH1750 *sensor){
 	return BH1750_OK;
 }
 
-BH1750_STATUS setSensorSensitivity(BH1750 *sensor, const uint8_t sensitivity){
+BH1750_STATUS BH1750_SetSensorSensitivity(BH1750 *sensor, uint8_t sensitivity){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
-	//Щаполняем буфер команд
-	sensor->buff[0] = 0x40;
-	sensor->buff[1] = sensitivity;
+	//Отправка команды для старших битов MTreg (формат: 01000_MT[7,6,5])
+	uint8_t highСmd = 0x40 | ((sensitivity >> 5) & 0x07);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, &highСmd, 1, HAL_MAX_DELAY);
+	if(*sensor->ret != HAL_OK) {
+			sensor->lastError = BH1750_TX_ERROR;
+			return BH1750_TX_ERROR;
+	}
+
+	//Отправка команды для младших битов MTreg (формат: 011_MT[4,3,2,1,0])
+	uint8_t lowСmd = 0x60 | (sensitivity & 0x1F);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, &lowСmd, 1, HAL_MAX_DELAY);
+	if(*sensor->ret != HAL_OK) {
+			sensor->lastError = BH1750_TX_ERROR;
+			return BH1750_TX_ERROR;
+	}
 	
-	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, sensor->buff, 2, 300);
-	
-		//Если получили ошибку - выход из функции
+	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
 		sensor->lastError = BH1750_TX_ERROR;
 		return BH1750_TX_ERROR;
 	}	
 	
+	sensor->sensitivity = sensitivity;
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
 
-void BH1750Deleter(BH1750 *sensor){
+void BH1750_Deleter(BH1750 *sensor){
 	free(sensor->buff);
 	free(sensor->ret);
 	free(sensor);
 }
 /////////////////////////////NON-BLOCKING MODE WITH INTERRUPTIONS/////////////////////////////
-BH1750_STATUS transmitHighResolutionDataMode1IT(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitHighResolutionData_Mode1_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -417,11 +439,10 @@ BH1750_STATUS transmitHighResolutionDataMode1IT(BH1750 *sensor){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS transmitHighResolutionDataMode2IT(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitHighResolutionData_Mode2_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -440,21 +461,20 @@ BH1750_STATUS transmitHighResolutionDataMode2IT(BH1750 *sensor){
 	return BH1750_OK;
 }
 
-void transmitHighResolutionDataIT(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode){
+void BH1750_TransmitHighResolutionData_IT(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode){
 	//Вызов функции измерения в зависимости от режима
 	if(mode == BH1750_ONE_LX){
-		transmitHighResolutionDataMode1IT(sensor); //Высокая точность, 1 люкс
+		BH1750_TransmitHighResolutionData_Mode1_IT(sensor); //Высокая точность, 1 люкс
 	}else{
-		transmitHighResolutionDataMode2IT(sensor); //Высокая точность, 0.5 люкс
+		BH1750_TransmitHighResolutionData_Mode2_IT(sensor); //Высокая точность, 0.5 люкс
 	}
 }
 
 
-BH1750_STATUS transmitLowResolutionDataIT(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitLowResolutionData_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -473,11 +493,10 @@ BH1750_STATUS transmitLowResolutionDataIT(BH1750 *sensor){
 	return BH1750_OK;
 }
 
-BH1750_STATUS transmitOnceHighResolutionDataMode1IT(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitOnceHighResolutionData_Mode1_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -496,15 +515,14 @@ BH1750_STATUS transmitOnceHighResolutionDataMode1IT(BH1750 *sensor){
 	return BH1750_OK;
 }
 
-BH1750_STATUS transmitOnceHighResolutionDataMode2IT(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitOnceHighResolutionData_Mode2_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
-	sensor->buff[0] = BH1750_HIGH_RES_MODE2;
+	sensor->buff[0] = BH1750_ONCE_HIGH_RES_MODE2;
 
 	//Отправляем команду
 	*sensor->ret = HAL_I2C_Master_Transmit_IT(sensor->port, sensor->address, sensor->buff, 1);
@@ -519,20 +537,19 @@ BH1750_STATUS transmitOnceHighResolutionDataMode2IT(BH1750 *sensor){
 	return BH1750_OK;		
 }
 
-void transmitOnceHighResolutionDataIT(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode){
+void BH1750_TransmitOnceHighResolutionData_IT(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode){
 	//Вызов функции измерения в зависимости от режима
 	if(mode == BH1750_ONE_LX){
-		transmitOnceHighResolutionDataMode1IT(sensor); //Высокая точность, 1 люкс
+		BH1750_TransmitOnceHighResolutionData_Mode1_IT(sensor); //Высокая точность, 1 люкс
 	}else{
-		transmitOnceHighResolutionDataMode2IT(sensor); //Высокая точность, 0.5 люкс
+		BH1750_TransmitOnceHighResolutionData_Mode2_IT(sensor); //Высокая точность, 0.5 люкс
 	}
 }
 
-BH1750_STATUS transmitOnceLowResolutionDataIT(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitOnceLowResolutionData_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -552,11 +569,10 @@ BH1750_STATUS transmitOnceLowResolutionDataIT(BH1750 *sensor){
 }
 
 
-BH1750_STATUS sensorPowerSwitchIT(BH1750 *sensor, const uint8_t mode){
+BH1750_STATUS BH1750_SensorPowerSwitch_IT(BH1750 *sensor, uint8_t mode){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	if(mode != BH1750_POWER_UP && mode != BH1750_POWER_DOWN){
@@ -580,11 +596,10 @@ BH1750_STATUS sensorPowerSwitchIT(BH1750 *sensor, const uint8_t mode){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS resetSensorIT(BH1750 *sensor){
+BH1750_STATUS BH1750_ResetSensor_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -603,21 +618,29 @@ BH1750_STATUS resetSensorIT(BH1750 *sensor){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS setSensorSensitivityIT(BH1750 *sensor, const uint8_t sensitivity){
+BH1750_STATUS BH1750_SetSensorSensitivity_IT(BH1750 *sensor, uint8_t sensitivity){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
-	//Щаполняем буфер команд
-	sensor->buff[0] = 0x40;
-	sensor->buff[1] = sensitivity;
+	//Отправка команды для старших битов MTreg (формат: 01000_MT[7,6,5])
+	uint8_t highСmd = 0x40 | ((sensitivity >> 5) & 0x07);
+	*sensor->ret = HAL_I2C_Master_Transmit_IT(sensor->port, sensor->address, &highСmd, 1);
+	if(*sensor->ret != HAL_OK) {
+			sensor->lastError = BH1750_TX_ERROR;
+			return BH1750_TX_ERROR;
+	}
+
+	//Отправка команды для младших битов MTreg (формат: 011_MT[4,3,2,1,0])
+	uint8_t lowСmd = 0x60 | (sensitivity & 0x1F);
+	*sensor->ret = HAL_I2C_Master_Transmit_IT(sensor->port, sensor->address, &lowСmd, 1);
+	if(*sensor->ret != HAL_OK) {
+			sensor->lastError = BH1750_TX_ERROR;
+			return BH1750_TX_ERROR;
+	}
 	
-	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit_IT(sensor->port, sensor->address, sensor->buff, 2);
-	
-		//Если получили ошибку - выход из функции
+	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
 		sensor->lastError = BH1750_TX_ERROR;
 		return BH1750_TX_ERROR;
@@ -627,15 +650,14 @@ BH1750_STATUS setSensorSensitivityIT(BH1750 *sensor, const uint8_t sensitivity){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS recieveIT(BH1750 *sensor){
+BH1750_STATUS BH1750_Recieve_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Запрашиваем результат
-	*sensor->ret = HAL_I2C_Master_Receive_IT(sensor->port, sensor->address, sensor->buff, 3);
+	*sensor->ret = HAL_I2C_Master_Receive_IT(sensor->port, sensor->address, sensor->buff, 2);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
@@ -648,11 +670,10 @@ BH1750_STATUS recieveIT(BH1750 *sensor){
 }
 
 /////////////////////////////NON-BLOCKING MODE WITH DMA/////////////////////////////
-BH1750_STATUS transmitHighResolutionDataMode1DMA(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitHighResolutionData_Mode1_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -671,11 +692,10 @@ BH1750_STATUS transmitHighResolutionDataMode1DMA(BH1750 *sensor){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS transmitHighResolutionDataMode2DMA(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitHighResolutionData_Mode2_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -694,21 +714,20 @@ BH1750_STATUS transmitHighResolutionDataMode2DMA(BH1750 *sensor){
 	return BH1750_OK;
 }
 
-void transmitHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode){
+void BH1750_TransmitHighResolutionData_DMA(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode){
 	//Вызов функции измерения в зависимости от режима
 	if(mode == BH1750_ONE_LX){
-		transmitHighResolutionDataMode1DMA(sensor); //Высокая точность, 1 люкс
+		BH1750_TransmitHighResolutionData_Mode1_DMA(sensor); //Высокая точность, 1 люкс
 	}else{
-		transmitHighResolutionDataMode2DMA(sensor); //Высокая точность, 0.5 люкс
+		BH1750_TransmitHighResolutionData_Mode2_DMA(sensor); //Высокая точность, 0.5 люкс
 	}
 }
 
 
-BH1750_STATUS transmitLowResolutionDataDMA(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitLowResolutionData_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -727,11 +746,10 @@ BH1750_STATUS transmitLowResolutionDataDMA(BH1750 *sensor){
 	return BH1750_OK;
 }
 
-BH1750_STATUS transmitOnceHighResolutionDataMode1DMA(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitOnceHighResolutionData_Mode1_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -750,15 +768,14 @@ BH1750_STATUS transmitOnceHighResolutionDataMode1DMA(BH1750 *sensor){
 	return BH1750_OK;
 }
 
-BH1750_STATUS transmitOnceHighResolutionDataMode2DMA(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitOnceHighResolutionData_Mode2_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
-	sensor->buff[0] = BH1750_HIGH_RES_MODE2;
+	sensor->buff[0] = BH1750_ONCE_HIGH_RES_MODE2;
 
 	//Отправляем команду
 	*sensor->ret = HAL_I2C_Master_Transmit_DMA(sensor->port, sensor->address, sensor->buff, 1);
@@ -773,20 +790,19 @@ BH1750_STATUS transmitOnceHighResolutionDataMode2DMA(BH1750 *sensor){
 	return BH1750_OK;		
 }
 
-void transmitOnceHighResolutionDataDMA(BH1750 *sensor, const MEASUREMENT_RESOLUTION_MODE mode){
+void BH1750_TransmitOnceHighResolutionData_DMA(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode){
 	//Вызов функции измерения в зависимости от режима
 	if(mode == BH1750_ONE_LX){
-		transmitOnceHighResolutionDataMode1DMA(sensor); //Высокая точность, 1 люкс
+		BH1750_TransmitOnceHighResolutionData_Mode1_DMA(sensor); //Высокая точность, 1 люкс
 	}else{
-		transmitOnceHighResolutionDataMode2DMA(sensor); //Высокая точность, 0.5 люкс
+		BH1750_TransmitOnceHighResolutionData_Mode2_DMA(sensor); //Высокая точность, 0.5 люкс
 	}
 }
 
-BH1750_STATUS transmitOnceLowResolutionDataDMA(BH1750 *sensor){
+BH1750_STATUS BH1750_TransmitOnceLowResolutionData_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -806,11 +822,10 @@ BH1750_STATUS transmitOnceLowResolutionDataDMA(BH1750 *sensor){
 }
 
 
-BH1750_STATUS sensorPowerSwitchDMA(BH1750 *sensor, const uint8_t mode){
+BH1750_STATUS BH1750_SensorPowerSwitch_DMA(BH1750 *sensor, uint8_t mode){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	if(mode != BH1750_POWER_UP && mode != BH1750_POWER_DOWN){
@@ -834,11 +849,10 @@ BH1750_STATUS sensorPowerSwitchDMA(BH1750 *sensor, const uint8_t mode){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS resetSensorDMA(BH1750 *sensor){
+BH1750_STATUS BH1750_ResetSensor_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Указываем команду
@@ -857,21 +871,29 @@ BH1750_STATUS resetSensorDMA(BH1750 *sensor){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS setSensorSensitivityDMA(BH1750 *sensor, const uint8_t sensitivity){
+BH1750_STATUS BH1750_SetSensorSensitivity_DMA(BH1750 *sensor, uint8_t sensitivity){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
-	//Щаполняем буфер команд
-	sensor->buff[0] = 0x40;
-	sensor->buff[1] = sensitivity;
+	//Отправка команды для старших битов MTreg (формат: 01000_MT[7,6,5])
+	uint8_t highСmd = 0x40 | ((sensitivity >> 5) & 0x07);
+	*sensor->ret = HAL_I2C_Master_Transmit_DMA(sensor->port, sensor->address, &highСmd, 1);
+	if(*sensor->ret != HAL_OK) {
+			sensor->lastError = BH1750_TX_ERROR;
+			return BH1750_TX_ERROR;
+	}
+
+	//Отправка команды для младших битов MTreg (формат: 011_MT[4,3,2,1,0])
+	uint8_t lowСmd = 0x60 | (sensitivity & 0x1F);
+	*sensor->ret = HAL_I2C_Master_Transmit_DMA(sensor->port, sensor->address, &lowСmd, 1);
+	if(*sensor->ret != HAL_OK) {
+			sensor->lastError = BH1750_TX_ERROR;
+			return BH1750_TX_ERROR;
+	}
 	
-	//Отправляем команду
-	*sensor->ret = HAL_I2C_Master_Transmit_DMA(sensor->port, sensor->address, sensor->buff, 2);
-	
-		//Если получили ошибку - выход из функции
+	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
 		sensor->lastError = BH1750_TX_ERROR;
 		return BH1750_TX_ERROR;
@@ -881,15 +903,14 @@ BH1750_STATUS setSensorSensitivityDMA(BH1750 *sensor, const uint8_t sensitivity)
 	return BH1750_OK;	
 }
 
-BH1750_STATUS recieveDMA(BH1750 *sensor){
+BH1750_STATUS BH1750_Recieve_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
-	BH1750_STATUS status = BH1750IsNull(sensor);
-	if(status != BH1750_OK){
-		return status;
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
 	}
 	
 	//Запрашиваем результат
-	*sensor->ret = HAL_I2C_Master_Receive_DMA(sensor->port, sensor->address, sensor->buff, 3);
+	*sensor->ret = HAL_I2C_Master_Receive_DMA(sensor->port, sensor->address, sensor->buff, 2);
 	
 	//Если получили ошибку - выход из функции
 	if(*sensor->ret != HAL_OK){
