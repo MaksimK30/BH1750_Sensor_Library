@@ -85,8 +85,11 @@ BH1750* BH1750_Init(I2C_HandleTypeDef *port, uint8_t address){
 }
 
 void BH1750_GetLux(BH1750 *sensor, BH1750_MEASUREMENT_RESOLUTION_MODE mode){
-	float correction = mode == BH1750_ONE_LX ? (69 / sensor->sensitivity) : (69 / sensor->sensitivity) / 2;
-	sensor->measure = (uint16_t)(sensor->buff[0] << 8 | sensor->buff[1]) / 1.2 * correction;
+	float correction = (mode == BH1750_ONE_LX ? 
+												((float)BH1750_DEFAULT_SENSITIVITY / sensor->sensitivity) : 
+												((float)BH1750_DEFAULT_SENSITIVITY / sensor->sensitivity) / 2.0f
+										);
+	sensor->measure = ((uint16_t)(sensor->buff[0] << 8 | sensor->buff[1])) / 1.2f * correction;
 }
 BH1750_STATUS BH1750_ReadHighResolutionData_Mode1(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
@@ -384,17 +387,19 @@ BH1750_STATUS BH1750_SetSensorSensitivity(BH1750 *sensor, uint8_t sensitivity){
 		return BH1750_NOT_INITIALIZED;
 	}
 	
+	//Подготовка сообщения в буфере
+	sensor->buff[0] = 0x40 | ((sensitivity >> 5) & 0x07);
+	sensor->buff[1] = 0x60 | (sensitivity & 0x1F);
+	
 	//Отправка команды для старших битов MTreg (формат: 01000_MT[7,6,5])
-	uint8_t highСmd = 0x40 | ((sensitivity >> 5) & 0x07);
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, &highСmd, 1, HAL_MAX_DELAY);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, &sensor->buff[0], 1, HAL_MAX_DELAY);
 	if(*sensor->ret != HAL_OK) {
 			sensor->lastError = BH1750_TX_ERROR;
 			return BH1750_TX_ERROR;
 	}
 
 	//Отправка команды для младших битов MTreg (формат: 011_MT[4,3,2,1,0])
-	uint8_t lowСmd = 0x60 | (sensitivity & 0x1F);
-	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, &lowСmd, 1, HAL_MAX_DELAY);
+	*sensor->ret = HAL_I2C_Master_Transmit(sensor->port, sensor->address, &sensor->buff[1], 1, HAL_MAX_DELAY);
 	if(*sensor->ret != HAL_OK) {
 			sensor->lastError = BH1750_TX_ERROR;
 			return BH1750_TX_ERROR;
@@ -618,38 +623,6 @@ BH1750_STATUS BH1750_ResetSensor_IT(BH1750 *sensor){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS BH1750_SetSensorSensitivity_IT(BH1750 *sensor, uint8_t sensitivity){
-	//Проверка заполнения указателей структуры
-	if(BH1750_IsNull(sensor)){
-		return BH1750_NOT_INITIALIZED;
-	}
-	
-	//Отправка команды для старших битов MTreg (формат: 01000_MT[7,6,5])
-	uint8_t highСmd = 0x40 | ((sensitivity >> 5) & 0x07);
-	*sensor->ret = HAL_I2C_Master_Transmit_IT(sensor->port, sensor->address, &highСmd, 1);
-	if(*sensor->ret != HAL_OK) {
-			sensor->lastError = BH1750_TX_ERROR;
-			return BH1750_TX_ERROR;
-	}
-
-	//Отправка команды для младших битов MTreg (формат: 011_MT[4,3,2,1,0])
-	uint8_t lowСmd = 0x60 | (sensitivity & 0x1F);
-	*sensor->ret = HAL_I2C_Master_Transmit_IT(sensor->port, sensor->address, &lowСmd, 1);
-	if(*sensor->ret != HAL_OK) {
-			sensor->lastError = BH1750_TX_ERROR;
-			return BH1750_TX_ERROR;
-	}
-	
-	//Если получили ошибку - выход из функции
-	if(*sensor->ret != HAL_OK){
-		sensor->lastError = BH1750_TX_ERROR;
-		return BH1750_TX_ERROR;
-	}	
-	
-	sensor->lastError = BH1750_OK;
-	return BH1750_OK;	
-}
-
 BH1750_STATUS BH1750_Recieve_IT(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
 	if(BH1750_IsNull(sensor)){
@@ -668,6 +641,34 @@ BH1750_STATUS BH1750_Recieve_IT(BH1750 *sensor){
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
+
+BH1750_STATUS BH1750_SetSensorSensitivity_IT(BH1750 *sensor, uint8_t sensitivity){
+	//Проверка заполнения указателей структуры
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
+	}
+	
+	//Подготовка сообщения в буфере
+	sensor->buff[0] = 0x40 | ((sensitivity >> 5) & 0x07);
+	sensor->buff[1] = 0x60 | (sensitivity & 0x1F);
+	
+	//Отправка команды для старших битов MTreg (формат: 01000_MT[7,6,5])
+	*sensor->ret = HAL_I2C_Master_Transmit_IT(sensor->port, sensor->address, &sensor->buff[0], 1);
+
+	//Отправка команды для младших битов MTreg (формат: 011_MT[4,3,2,1,0])
+	*sensor->ret = HAL_I2C_Master_Transmit_IT(sensor->port, sensor->address, &sensor->buff[1], 1);
+	
+	//Если получили ошибку - выход из функции
+	if(*sensor->ret != HAL_OK){
+		sensor->lastError = BH1750_TX_ERROR;
+		return BH1750_TX_ERROR;
+	}	
+	
+	sensor->sensitivity = sensitivity;
+	sensor->lastError = BH1750_OK;
+	return BH1750_OK;
+}
+
 
 /////////////////////////////NON-BLOCKING MODE WITH DMA/////////////////////////////
 BH1750_STATUS BH1750_TransmitHighResolutionData_Mode1_DMA(BH1750 *sensor){
@@ -871,38 +872,6 @@ BH1750_STATUS BH1750_ResetSensor_DMA(BH1750 *sensor){
 	return BH1750_OK;	
 }
 
-BH1750_STATUS BH1750_SetSensorSensitivity_DMA(BH1750 *sensor, uint8_t sensitivity){
-	//Проверка заполнения указателей структуры
-	if(BH1750_IsNull(sensor)){
-		return BH1750_NOT_INITIALIZED;
-	}
-	
-	//Отправка команды для старших битов MTreg (формат: 01000_MT[7,6,5])
-	uint8_t highСmd = 0x40 | ((sensitivity >> 5) & 0x07);
-	*sensor->ret = HAL_I2C_Master_Transmit_DMA(sensor->port, sensor->address, &highСmd, 1);
-	if(*sensor->ret != HAL_OK) {
-			sensor->lastError = BH1750_TX_ERROR;
-			return BH1750_TX_ERROR;
-	}
-
-	//Отправка команды для младших битов MTreg (формат: 011_MT[4,3,2,1,0])
-	uint8_t lowСmd = 0x60 | (sensitivity & 0x1F);
-	*sensor->ret = HAL_I2C_Master_Transmit_DMA(sensor->port, sensor->address, &lowСmd, 1);
-	if(*sensor->ret != HAL_OK) {
-			sensor->lastError = BH1750_TX_ERROR;
-			return BH1750_TX_ERROR;
-	}
-	
-	//Если получили ошибку - выход из функции
-	if(*sensor->ret != HAL_OK){
-		sensor->lastError = BH1750_TX_ERROR;
-		return BH1750_TX_ERROR;
-	}	
-	
-	sensor->lastError = BH1750_OK;
-	return BH1750_OK;	
-}
-
 BH1750_STATUS BH1750_Recieve_DMA(BH1750 *sensor){
 	//Проверка заполнения указателей структуры
 	if(BH1750_IsNull(sensor)){
@@ -918,6 +887,33 @@ BH1750_STATUS BH1750_Recieve_DMA(BH1750 *sensor){
 		return BH1750_RX_ERROR;
 	}
 	
+	sensor->lastError = BH1750_OK;
+	return BH1750_OK;
+}
+
+BH1750_STATUS BH1750_SetSensorSensitivity_DMA(BH1750 *sensor, uint8_t sensitivity){
+	//Проверка заполнения указателей структуры
+	if(BH1750_IsNull(sensor)){
+		return BH1750_NOT_INITIALIZED;
+	}
+	
+	//Подготовка сообщения в буфере
+	sensor->buff[0] = 0x40 | ((sensitivity >> 5) & 0x07);
+	sensor->buff[1] = 0x60 | (sensitivity & 0x1F);
+	
+	//Отправка команды для старших битов MTreg (формат: 01000_MT[7,6,5])
+	*sensor->ret = HAL_I2C_Master_Transmit_DMA(sensor->port, sensor->address, &sensor->buff[0], 1);
+
+	//Отправка команды для младших битов MTreg (формат: 011_MT[4,3,2,1,0])
+	*sensor->ret = HAL_I2C_Master_Transmit_DMA(sensor->port, sensor->address, &sensor->buff[1], 1);
+	
+	//Если получили ошибку - выход из функции
+	if(*sensor->ret != HAL_OK){
+		sensor->lastError = BH1750_TX_ERROR;
+		return BH1750_TX_ERROR;
+	}	
+	
+	sensor->sensitivity = sensitivity;
 	sensor->lastError = BH1750_OK;
 	return BH1750_OK;
 }
