@@ -1,3 +1,5 @@
+#include <stdlib.h>
+#include <stdbool.h>
 #include "main.h"
 
 #ifndef BH1750_H
